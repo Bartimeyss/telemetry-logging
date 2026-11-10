@@ -1,3 +1,8 @@
+using Elastic.Channels;
+using Elastic.Ingest.Elasticsearch;
+using Elastic.Ingest.Elasticsearch.DataStreams;
+using Elastic.Serilog.Sinks;
+using Elastic.Transport;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -13,17 +18,32 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
-    // Add services to the container.
     builder.Services.AddRazorPages();
 
-    // Подключение Serilog к хосту
     builder.Host.UseSerilog((hostingContext, services, loggerConfiguration) =>
-        loggerConfiguration.ReadFrom.Configuration(hostingContext.Configuration)
+        loggerConfiguration
+            .ReadFrom.Configuration(hostingContext.Configuration)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Environment", hostingContext.HostingEnvironment.EnvironmentName)
+            .WriteTo.Elasticsearch([new Uri("http://localhost:9200")], options =>
+            {
+                options.DataStream = new DataStreamName("logs", "telemetry-logging", "demo");
+                options.BootstrapMethod = BootstrapMethod.Failure;
+                options.ConfigureChannel = channelOptions =>
+                {
+                    channelOptions.BufferOptions = new BufferOptions
+                    {
+                        ExportMaxConcurrency = 10
+                    };
+                };
+            }, transport =>
+            {
+                transport.Authentication(new BasicAuthentication("elastic", "changeme"));
+            })
     );
 
     var app = builder.Build();
 
-    // Configure the HTTP request pipeline.
     if (!app.Environment.IsDevelopment())
     {
         app.UseExceptionHandler("/Error");
@@ -35,18 +55,16 @@ try
     app.UseSerilogRequestLogging();
 
     app.UseRouting();
-
     app.UseAuthorization();
-
     app.MapRazorPages();
 
     Log.Information("Приложение успешно сконфигурировано");
 
     app.Run();
 }
-catch (Exception ex)
+catch (Exception exception)
 {
-    Log.Fatal(ex, "Ошибка при запуске приложения");
+    Log.Fatal(exception, "Ошибка при запуске приложения");
 }
 finally
 {
